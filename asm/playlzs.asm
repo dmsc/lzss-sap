@@ -25,7 +25,7 @@ POKEY = $D200
 
     org $2000
 buffer
-    .ds 9 * 16
+    .ds 256
 
     org $2100
 
@@ -61,7 +61,7 @@ chn_loop:
     lsr bit_data       ; Get next bit
     bne got_bit
     jsr get_byte       ; Not enough bits, refill!
-    ror                 ; Extract a new bit and add a 1 at the high bit (from C set above)
+    ror                ; Extract a new bit and add a 1 at the high bit (from C set above)
     sta bit_data       ;
 got_bit:
     jsr get_byte       ; Always read a byte, it could mean "match size/offset" or "literal byte"
@@ -77,7 +77,7 @@ got_bit:
 
                         ; And start copying first byte
 do_copy_byte:
-    dec chn_copy, x    ; Decrease match length, increase match position
+    dec chn_copy, x     ; Decrease match length, increase match position
     inc chn_pos, x
     lda chn_pos, x
     and #$0F
@@ -90,7 +90,7 @@ do_copy_byte:
 store:
     sta POKEY, x
     pha
-    lda cur_pos        ; Store into buffer, get current position + channel into Y
+    lda cur_pos         ; Store into buffer, get current position + channel into Y
     and #$0F
     ora cur_chan
     tay
@@ -99,7 +99,7 @@ store:
 
     inx
     cpx #$09
-    bne chn_loop       ; Next channel
+    bne chn_loop        ; Next channel
 
     inc cur_pos
     lda 20
