@@ -87,12 +87,31 @@ int hsh(const uint8_t *p)
 // Statistics
 static int stat_len[256+16];
 static int stat_off[256+16];
-static int stat_strm[16];
 
 static const int max_len = 17;   // Depends on encoding
 static const int min_len =  2;
 static const int max_off = 16;
 
+// Struct for LZ optimal parsing
+struct lzop
+{
+    const uint8_t *data;// The data to compress
+    int size;           // Data size
+    int *bits;          // Number of bits needed to code from position
+    int *mlen;          // Best match length at position (0 == no match);
+    int *mpos;          // Best match offset at position
+};
+
+static void lzop_init(struct lzop *lz, const uint8_t *data, int size)
+{
+    lz->data = data;
+    lz->size = size;
+    lz->bits = calloc(sizeof(int), size);
+    lz->mlen = calloc(sizeof(int), size);
+    lz->mpos = calloc(sizeof(int), size);
+}
+
+// Returns maximal match length (and match position) at pos.
 static int match(const uint8_t *data, int pos, int size, int *mpos)
 {
     int mxlen = -max(-max_len, pos - size);
@@ -100,7 +119,7 @@ static int match(const uint8_t *data, int pos, int size, int *mpos)
     for(int i=max(pos-max_off,0); i<pos; i++)
     {
         int ml = get_mlen(data + pos, data + i, mxlen);
-        if( ml >= mlen )
+        if( ml > mlen )
         {
             mlen = ml;
             *mpos = pos - i;
@@ -109,41 +128,52 @@ static int match(const uint8_t *data, int pos, int size, int *mpos)
     return mlen;
 }
 
-static int lzcomp(struct bf *b, const uint8_t *data, int pos, int size, int lpos)
+static void lzop_backfill(struct lzop *lz)
+{
+    if(lz->size)
+        lz->bits[lz->size-1] = 9;
+
+    // Go backwards in file storing best parsing
+    for(int pos = lz->size - 2; pos>=0; pos--)
+    {
+        // Get best match at this position
+        int mp = 0;
+        int ml = match(lz->data , pos, lz->size, &mp);
+
+        // Init "no-match" case
+        int best = lz->bits[pos+1] + 9;
+
+        // Check all posible match lengths, store best
+        lz->bits[pos] = best;
+        lz->mpos[pos] = mp;
+        for(int l=ml; l>=min_len; l--)
+        {
+            int b = lz->bits[pos+l] + 9;
+            if( b < best )
+            {
+                best = b;
+                lz->bits[pos] = best;
+                lz->mlen[pos] = l;
+                lz->mpos[pos] = mp;
+            }
+        }
+    }
+}
+
+static int lzop_encode(struct bf *b, struct lzop *lz, int pos, int lpos)
 {
     if( pos <= lpos )
         return lpos;
 
-    // Check if we have a match - and get max length of match
-    int mpos = 0, xx = 0;
-    int mlen = match(data, pos, size, &mpos);
+    int mlen = lz->mlen[pos];
+    int mpos = lz->mpos[pos];
 
-#if 1   // TODO: does not seems to make file smaller!!
-    // Try lazy matching now
-    if( mlen >= 2 && match(data, pos + mlen, size, &xx) < min_len+1 )
-    {
-//    if(mlen >= 2)
-//        fprintf(stderr,"(%02x) at %d, match %d\n", hsh(data), pos, mlen);
-    int mk = -max(-mlen, -5);
-    for(int k=1; k < mk && mlen >= 2 && mlen < max_len-1; k++)
-    {
-        int mp = 0;
-        int ml = match(data, pos + k, size, &mp);
-        if( ml > mlen + k )
-        {
-            // Found a better match
-//            fprintf(stderr,"(%02x) at %d + %d, match %d better than %d\n",
-//                    hsh(data), pos, k, ml, mlen);
-            mlen = 0;
-        }
-    }
-    }
-#endif
+    // Encode best from filled table
     if( mlen < min_len )
     {
         // No match, just encode the byte
         add_bit(b,1);
-        add_byte(b,data[pos]);
+        add_byte(b, lz->data[pos]);
         stat_len[0] ++;
         return pos;
     }
@@ -226,25 +256,28 @@ int main()
         }
     }
 
+    // Init LZ states
+    struct lzop lz[9];
+    for(int i=0; i<9; i++)
+    {
+        lzop_init(&lz[i], data[i], sz);
+        lzop_backfill(&lz[i]);
+    }
+
     // Compress
     init(&b);
     for(int pos = 0; pos < sz; pos++)
-    {
         for(int i=0; i<9; i++)
-        {
-            if( pos > lpos[i] )
-                stat_strm[i] += 9;
-            lpos[i] = lzcomp(&b, data[i], pos, sz, lpos[i]);
-        }
-    }
+            lpos[i] = lzop_encode(&b, &lz[i], pos, lpos[i]);
     bflush(&b);
     fflush(stdout);
+
     // Show stats
     fprintf(stderr,"Ratio: %d / %d = %.2f%%\n", b.total, 9*sz, (100.0*b.total) / (9.0*sz));
     for(int i=0; i<9; i++)
         fprintf(stderr," Stream #%d: %d bits,\t%5.2f%%,\t%5.2f%% of output\n", i,
-                stat_strm[i], (100.0*stat_strm[i]) / (8.0*sz),
-                (100.0*stat_strm[i])/(8.0*b.total) );
+                lz[i].bits[0], (100.0*lz[i].bits[0]) / (8.0*sz),
+                (100.0*lz[i].bits[0])/(8.0*b.total) );
 
     fprintf(stderr,"\nvalue\t  POS\t  LEN\n");
     for(int i=0; i<=max(max_len,max_off); i++)
