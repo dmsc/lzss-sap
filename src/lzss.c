@@ -3,6 +3,22 @@
 #include <stdlib.h>
 #include <string.h>
 
+
+#ifdef _WIN32
+#include <io.h>
+#include <fcntl.h>
+void set_binary(void)
+{
+  setmode(fileno(stdout),O_BINARY);
+  setmode(fileno(stdin),O_BINARY);
+}
+#else
+void set_binary(void)
+{
+}
+#endif
+
+
 ///////////////////////////////////////////////////////
 // Bit encoding functions
 struct bf
@@ -22,6 +38,9 @@ static void init(struct bf *x)
 
 static void bflush(struct bf *x)
 {
+    while( (x->bit & 1) == 0 )
+        x->bit >>= 1;
+
     putchar( x->bit >> 1 );
     if( x->len )
         fwrite(x->buf, x->len, 1, stdout);
@@ -68,6 +87,7 @@ int hsh(const uint8_t *p)
 // Statistics
 static int stat_len[256+16];
 static int stat_off[256+16];
+static int stat_strm[16];
 
 static const int max_len = 17;   // Depends on encoding
 static const int min_len =  2;
@@ -148,9 +168,12 @@ int main()
     // Max size of each bufer: 128k
     for(int i=0; i<9; i++)
     {
-        data[i] = malloc(128*1024);
+        data[i] = malloc(128*1024); // calloc(128,1024);
         lpos[i] = -1;
     }
+
+    // Set stdin and stdout as binary files
+    set_binary();
 
     // Skip SAP header
     long pos = ftell(stdin);
@@ -164,17 +187,43 @@ int main()
 
     fseek(stdin, pos, SEEK_SET);
     // Read all data
-    int sz = 0;
-    while( 1 == fread(buf, 9, 1, stdin) && sz < (128*1024) )
+    int sz;
+    for( sz = 0;  1 == fread(buf, 9, 1, stdin) && sz < (128*1024); sz++ )
     {
         for(int i=0; i<9; i++)
         {
             // Simplify patterns - rewrite silence as 0
-            if( (i & 1) == 1 && 0 == (buf[i] & 0x0f) )
-                buf[i] = 0;
+            if( (i & 1) == 1 )
+            {
+                int vol  = buf[i] & 0x0F;
+                int dist = buf[i] & 0xF0;
+                if( vol == 0 )
+                    buf[i] = 0;
+                else if( dist & 0x10 )
+                    buf[i] &= 0x1F;     // volume-only, ignore other bits
+                else if( dist & 0x20 )
+                    buf[i] &= 0xBF;     // no noise, ignore noise type bit
+            }
             data[i][sz] = buf[i];
         }
-        sz++;
+    }
+    // Check for empty streams and warn
+    for(int i=0; i<9; i++)
+    {
+        const uint8_t *p = data[i], s = *p;
+        int n = 0;
+        for(int j=0; j<sz; j++)
+            if( *p++ != s )
+                n++;
+        if( !n )
+        {
+            fprintf(stderr,"WARNING: stream #%d ", i);
+            if( s == 0 )
+                fprintf(stderr,"is empty");
+            else
+                fprintf(stderr,"contains only $%02X", s);
+            fprintf(stderr, ", should not be included in output!\n");
+        }
     }
 
     // Compress
@@ -182,12 +231,22 @@ int main()
     for(int pos = 0; pos < sz; pos++)
     {
         for(int i=0; i<9; i++)
+        {
+            if( pos > lpos[i] )
+                stat_strm[i] += 9;
             lpos[i] = lzcomp(&b, data[i], pos, sz, lpos[i]);
+        }
     }
     bflush(&b);
+    fflush(stdout);
     // Show stats
     fprintf(stderr,"Ratio: %d / %d = %.2f%%\n", b.total, 9*sz, (100.0*b.total) / (9.0*sz));
-    fprintf(stderr,"value\t  POS\t  LEN\n");
+    for(int i=0; i<9; i++)
+        fprintf(stderr," Stream #%d: %d bits,\t%5.2f%%,\t%5.2f%% of output\n", i,
+                stat_strm[i], (100.0*stat_strm[i]) / (8.0*sz),
+                (100.0*stat_strm[i])/(8.0*b.total) );
+
+    fprintf(stderr,"\nvalue\t  POS\t  LEN\n");
     for(int i=0; i<=max(max_len,max_off); i++)
     {
         fprintf(stderr,"%2d\t%5d\t%5d\n", i, stat_off[i], stat_len[i]);
