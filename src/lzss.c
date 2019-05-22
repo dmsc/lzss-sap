@@ -182,7 +182,7 @@ static int lzop_encode(struct bf *b, struct lzop *lz, int pos, int lpos)
         int code_pos = (pos - 1 - mpos) & 0x0F;
         int code_len = mlen - 2;
         add_bit(b,0);
-        add_byte(b,code_pos + (code_len << 4));
+        add_byte(b,(code_pos<<4) + code_len);
         stat_len[mlen] ++;
         stat_off[mpos] ++;
         return pos + mlen - 1;

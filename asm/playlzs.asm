@@ -6,7 +6,6 @@
     org $80
 
 cur_chan    .ds     1
-cur_pos     .ds     1
 chn_copy    .ds     9
 chn_pos     .ds     9
 
@@ -36,9 +35,10 @@ song_end
 
 start
     ldx #(bit_data - cur_chan - 1)
-    lda #0
+    ; Y is current position in buffer - init to 0
+    ldy #0
 clear
-    sta cur_chan, x
+    sty cur_chan, x
     dex
     bpl clear
 
@@ -47,12 +47,7 @@ sap_loop:
 
     ; Loop through all "channels", one for each POKEY register
 chn_loop:
-    txa                 ; Get channel buffer address, used to store old channel data
-    asl
-    asl
-    asl
-    asl
-    sta cur_chan
+    stx cur_chan
 
     lda chn_copy, x    ; Get status of this stream
     bne do_copy_byte   ; If > 0 we are copying bytes
@@ -67,41 +62,45 @@ got_bit:
     jsr get_byte       ; Always read a byte, it could mean "match size/offset" or "literal byte"
     bcs store          ; Bit = 1 is "literal", bit = 0 is "match"
 
-    sta chn_pos, x     ; Store "position" (no need to AND #$0F, it will be done above)
-    adc #$20           ; Adds 2 to match length (C = 0 from above)
-    ror
-    lsr
-    lsr
-    lsr
-    sta  chn_copy, x    ; Store in "copy length"
+    pha                ; Save A
+    and #$0F
+    adc #$2            ; Adds 2 to match length (C = 0 from above)
+    sta chn_copy, x    ; Store in "copy length"
+
+    pla                ; Restore A, get match position
+    and #$F0
+    ora cur_chan       ; Add channel to position
+
+    sta chn_pos, x     ; Store "position"
 
                         ; And start copying first byte
 do_copy_byte:
     dec chn_copy, x     ; Decrease match length, increase match position
-    inc chn_pos, x
     lda chn_pos, x
-    and #$0F
-    ora cur_chan
-    tay
+;    clc                ; NOTE: here C is always clear because the CPX at the end of the channel loop,
+;                       ;       and the CMP at the end of the SAP loop
+    adc #$10
+    sta chn_pos, x
 
     ; Now, read old data, jump to data store
-    lda buffer, y
+    tax
+    lda buffer, x
+    ldx cur_chan
 
 store:
-    sta POKEY, x
-    pha
-    lda cur_pos         ; Store into buffer, get current position + channel into Y
-    and #$0F
-    ora cur_chan
-    tay
-    pla
+    sta POKEY, x        ; Store to output and buffer
     sta buffer, y
 
+    iny
     inx
     cpx #$09
     bne chn_loop        ; Next channel
 
-    inc cur_pos
+    tya                 ; Increment buffer pos to channel 0 again (9 + 6 + C = 16)
+;   sec                 ; Here C = 1 from CPX above
+    adc #$6
+    tay
+
     lda 20
 delay
     cmp 20
