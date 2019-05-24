@@ -240,46 +240,65 @@ int main()
         }
     }
     // Check for empty streams and warn
-    for(int i=0; i<9; i++)
+    int chn_skip[9];;
+    init(&b);
+    for(int i=8; i>=0; i--)
     {
         const uint8_t *p = data[i], s = *p;
         int n = 0;
         for(int j=0; j<sz; j++)
             if( *p++ != s )
                 n++;
-        if( !n )
+        if( i != 0 && !n )
         {
-            fprintf(stderr,"WARNING: stream #%d ", i);
-            if( s == 0 )
-                fprintf(stderr,"is empty");
-            else
-                fprintf(stderr,"contains only $%02X", s);
-            fprintf(stderr, ", should not be included in output!\n");
+            fprintf(stderr,"Skipping channel #%d, set with $%02x.\n", i, s);
+            add_bit(&b,1);
+            add_byte(&b,s);
+            chn_skip[i] = 1;
+        }
+        else
+        {
+            if( !i )
+                add_bit(&b,0);
+            chn_skip[i] = 0;
+            if( !n )
+            {
+                fprintf(stderr,"WARNING: stream #%d ", i);
+                if( s == 0 )
+                    fprintf(stderr,"is empty");
+                else
+                    fprintf(stderr,"contains only $%02X", s);
+                fprintf(stderr, ", should not be included in output!\n");
+            }
         }
     }
+    bflush(&b);
 
     // Init LZ states
     struct lzop lz[9];
     for(int i=0; i<9; i++)
-    {
-        lzop_init(&lz[i], data[i], sz);
-        lzop_backfill(&lz[i]);
-    }
+        if( !chn_skip[i] )
+        {
+            lzop_init(&lz[i], data[i], sz);
+            lzop_backfill(&lz[i]);
+        }
 
     // Compress
     init(&b);
     for(int pos = 0; pos < sz; pos++)
         for(int i=0; i<9; i++)
-            lpos[i] = lzop_encode(&b, &lz[i], pos, lpos[i]);
+            if( !chn_skip[i] )
+                lpos[i] = lzop_encode(&b, &lz[i], pos, lpos[i]);
     bflush(&b);
     fflush(stdout);
 
     // Show stats
     fprintf(stderr,"Ratio: %d / %d = %.2f%%\n", b.total, 9*sz, (100.0*b.total) / (9.0*sz));
     for(int i=0; i<9; i++)
-        fprintf(stderr," Stream #%d: %d bits,\t%5.2f%%,\t%5.2f%% of output\n", i,
-                lz[i].bits[0], (100.0*lz[i].bits[0]) / (8.0*sz),
-                (100.0*lz[i].bits[0])/(8.0*b.total) );
+        if( !chn_skip[i] )
+            fprintf(stderr," Stream #%d: %d bits,\t%5.2f%%,\t%5.2f%% of output\n", i,
+                    lz[i].bits[0], (100.0*lz[i].bits[0]) / (8.0*sz),
+                    (100.0*lz[i].bits[0])/(8.0*b.total) );
 
     fprintf(stderr,"\nvalue\t  POS\t  LEN\n");
     for(int i=0; i<=max(max_len,max_off); i++)

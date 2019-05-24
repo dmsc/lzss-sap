@@ -12,7 +12,7 @@ chn_pos     .ds     9
 bit_data    .byte   1
 
 get_byte
-    lda song_data
+    lda song_data+1
     inc get_byte+1
     bne skip
     inc get_byte+2
@@ -29,18 +29,27 @@ buffer
     org $2100
 
 song_data
-        ins     'test.lzs'
+        ins     'test.lz2'
 song_end
 
 
 start
-    ldx #(bit_data - cur_chan - 1)
     ; Y is current position in buffer - init to 0
     ldy #0
+
+    ldx #9
 clear
-    sty cur_chan, x
+    lsr song_data
+    tya
+    ror                 ; A = 0 or 128
+    sta chn_copy-1, x
+    bpl chn_no_skip
+    ; Skip this channel, read just init value
+    jsr get_byte
+chn_no_skip
+    sta POKEY-1, x
     dex
-    bpl clear
+    bne clear
 
 sap_loop:
     ldx  #0
@@ -50,6 +59,7 @@ chn_loop:
     stx cur_chan
 
     lda chn_copy, x    ; Get status of this stream
+    bmi skip_chn       ; Negative - skip this channel
     bne do_copy_byte   ; If > 0 we are copying bytes
 
     ; We are decoding a new match/literal
@@ -91,6 +101,7 @@ store:
     sta POKEY, x        ; Store to output and buffer
     sta buffer, y
 
+skip_chn:
     iny
     inx
     cpx #$09
