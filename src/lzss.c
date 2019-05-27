@@ -1,7 +1,9 @@
+#include <errno.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <unistd.h>
 
 
 #ifdef _WIN32
@@ -23,44 +25,77 @@ void set_binary(void)
 // Bit encoding functions
 struct bf
 {
-    int bit;
     int len;
-    uint8_t buf[16];
+    uint8_t buf[65536];
+    int bnum;
+    int bpos;
+    int hpos;
     int total;
+    FILE *out;
 };
 
 static void init(struct bf *x)
 {
     x->total = 0;
-    x->bit = 256;
     x->len = 0;
+    x->bnum = 0;
+    x->bpos = -1;
+    x->hpos = -1;
 }
 
 static void bflush(struct bf *x)
 {
-    while( (x->bit & 1) == 0 )
-        x->bit >>= 1;
-
-    putchar( x->bit >> 1 );
     if( x->len )
-        fwrite(x->buf, x->len, 1, stdout);
-    x->total += (1 + x->len);
-    x->bit = 256;
+        fwrite(x->buf, x->len, 1, x->out);
+    x->total += x->len;
     x->len = 0;
+    x->bnum = 0;
+    x->bpos = -1;
+    x->hpos = -1;
 }
 
 
 static void add_bit(struct bf *x, int bit)
 {
-    if( x->bit & 1 )
-        bflush(x);
-    x->bit = (x->bit >> 1) | (bit ? 256 : 0);
+    if( x->bpos < 0 )
+    {
+        // Adds a new byte holding bits
+        x->bpos = x->len;
+        x->bnum = 0;
+        x->len++;
+        x->buf[x->bpos] = 0;
+    }
+    if( bit )
+        x->buf[x->bpos] |= 1 << x->bnum;
+    x->bnum++;
+    if( x->bnum == 8 )
+    {
+        x->bpos = -1;
+        x->bnum = 0;
+    }
 }
 
 static void add_byte(struct bf *x, int byte)
 {
     x->buf[x->len] = byte;
     x->len ++;
+}
+
+static void add_hbyte(struct bf *x, int hbyte)
+{
+    if( x->hpos < 0 )
+    {
+        // Adds a new byte holding half-bytes
+        x->hpos = x->len;
+        x->len++;
+        x->buf[x->hpos] = hbyte & 0x0F;
+    }
+    else
+    {
+        // Fixes last h-byte
+        x->buf[x->hpos] |= hbyte << 4;
+        x->hpos = -1;
+    }
 }
 
 ///////////////////////////////////////////////////////
@@ -84,13 +119,20 @@ int hsh(const uint8_t *p)
     return 0xFF & (x ^ (x>>8) ^ (x>>16) ^ (x>>24));
 }
 
-// Statistics
-static int stat_len[256+16];
-static int stat_off[256+16];
+static int bits_moff = 4;       // Number of bits used for OFFSET
+static int bits_mlen = 4;       // Number of bits used for MATCH
+static int min_mlen = 2;        // Minimum match length
 
-static const int max_len = 17;   // Depends on encoding
-static const int min_len =  2;
-static const int max_off = 16;
+#define bits_literal (1+8)      // Number of bits for encoding a literal
+#define bits_match (1 + bits_moff + bits_mlen)  // Bits for encoding a match
+
+#define max_mlen (min_mlen + (1<<bits_mlen) -1) // Maximum match length
+#define max_off (1<<bits_moff)  // Maximum offset
+
+// Statistics
+static int *stat_len;
+static int *stat_off;
+
 
 // Struct for LZ optimal parsing
 struct lzop
@@ -114,7 +156,7 @@ static void lzop_init(struct lzop *lz, const uint8_t *data, int size)
 // Returns maximal match length (and match position) at pos.
 static int match(const uint8_t *data, int pos, int size, int *mpos)
 {
-    int mxlen = -max(-max_len, pos - size);
+    int mxlen = -max(-max_mlen, pos - size);
     int mlen = 0;
     for(int i=max(pos-max_off,0); i<pos; i++)
     {
@@ -131,7 +173,7 @@ static int match(const uint8_t *data, int pos, int size, int *mpos)
 static void lzop_backfill(struct lzop *lz)
 {
     if(lz->size)
-        lz->bits[lz->size-1] = 9;
+        lz->bits[lz->size-1] = bits_literal;
 
     // Go backwards in file storing best parsing
     for(int pos = lz->size - 2; pos>=0; pos--)
@@ -141,14 +183,14 @@ static void lzop_backfill(struct lzop *lz)
         int ml = match(lz->data , pos, lz->size, &mp);
 
         // Init "no-match" case
-        int best = lz->bits[pos+1] + 9;
+        int best = lz->bits[pos+1] + bits_literal;
 
         // Check all posible match lengths, store best
         lz->bits[pos] = best;
         lz->mpos[pos] = mp;
-        for(int l=ml; l>=min_len; l--)
+        for(int l=ml; l>=min_mlen; l--)
         {
-            int b = lz->bits[pos+l] + 9;
+            int b = lz->bits[pos+l] + bits_match;
             if( b < best )
             {
                 best = b;
@@ -169,9 +211,10 @@ static int lzop_encode(struct bf *b, struct lzop *lz, int pos, int lpos)
     int mpos = lz->mpos[pos];
 
     // Encode best from filled table
-    if( mlen < min_len )
+    if( mlen < min_mlen )
     {
         // No match, just encode the byte
+//        fprintf(stderr,"L: %02x\n", lz->data[pos]);
         add_bit(b,1);
         add_byte(b, lz->data[pos]);
         stat_len[0] ++;
@@ -179,23 +222,136 @@ static int lzop_encode(struct bf *b, struct lzop *lz, int pos, int lpos)
     }
     else
     {
-        int code_pos = (pos - 1 - mpos) & 0x0F;
-        int code_len = mlen - 2;
+        int code_pos = (pos - 1 - mpos) & (max_off - 1);
+        int code_len = mlen - min_mlen;
+//        fprintf(stderr,"M: %02x : %02x  [%04x]\n", code_pos, code_len,
+//                       (code_pos << bits_mlen) + code_len);
         add_bit(b,0);
-        add_byte(b,(code_pos<<4) + code_len);
+        add_byte(b,(code_pos<<bits_mlen) + code_len);
+        if( bits_mlen + bits_moff > 8 )
+            add_hbyte(b, code_pos>>(8-bits_mlen));
+
         stat_len[mlen] ++;
         stat_off[mpos] ++;
         return pos + mlen - 1;
     }
 }
 
+static const char *prog_name;
+static void cmd_error(const char *msg)
+{
+    fprintf(stderr,"%s: error, %s\n"
+            "Try '%s -h' for help.\n", prog_name, msg, prog_name);
+    exit(1);
+}
+
 ///////////////////////////////////////////////////////
-int main()
+int main(int argc, char **argv)
 {
     struct bf b;
     uint8_t buf[9], *data[9];
     char header_line[128];
     int lpos[9];
+    int show_stats = 0;
+    int bits_mtotal = bits_moff + bits_mlen;
+    int bits_set = 0;
+
+    prog_name = argv[0];
+    int opt;
+    while( -1 != (opt = getopt(argc, argv, "hvo:l:m:b:")) )
+    {
+        switch(opt)
+        {
+            case 'o':
+                bits_moff = atoi(optarg);
+                bits_set |= 1;
+                break;
+            case 'l':
+                bits_mlen = atoi(optarg);
+                bits_set |= 2;
+                break;
+            case 'b':
+                bits_mtotal = atoi(optarg);
+                bits_set |= 4;
+                break;
+            case 'm':
+                min_mlen = atoi(optarg);
+                break;
+            case 'v':
+                show_stats = 1;
+                break;
+            case 'h':
+            default:
+                fprintf(stderr,
+                       "LZSS SAP Type-R compressor - by dmsc.\n"
+                       "\n"
+                       "Usage: %s [options] <input_file> <output_file>\n"
+                       "\n"
+                       "If output_file is omitted, write to standard output, and if\n"
+                       "input_file is also omitted, read from standard input.\n"
+                       "\n"
+                       "Options:\n"
+                       "  -o BITS  Sets match offset bits (default = %d).\n"
+                       "  -l BITS  Sets match length bits (default = %d).\n"
+                       "  -b BITS  Sets match total bits (=offset+length) (default = %d).\n"
+                       "  -m NUM   Sets minimum match length (default = %d).\n"
+                       "  -v       Shows match length/offset statistics.\n"
+                       "  -h       Shows this help.\n",
+                       prog_name, bits_moff, bits_mlen, bits_mtotal, min_mlen);
+                exit(EXIT_FAILURE);
+        }
+    }
+
+    if( bits_mtotal < 8 || bits_mtotal > 12 )
+        cmd_error("total match bits should be from 8 to 12");
+
+    // Calculate bits
+    switch(bits_set)
+    {
+        case 0:
+        case 1:
+        case 4:
+        case 5:
+            bits_mlen = bits_mtotal - bits_moff;
+            break;
+        case 2:
+        case 6:
+            bits_moff = bits_mtotal - bits_mlen;
+            break;
+        case 3:
+            // OK
+            break;
+        case 7:
+            cmd_error("only two of OFFSET, LENGTH and TOTAL bits should be given");
+            break;
+    }
+    // Check option values
+    if( bits_moff < 0 || bits_moff > 9 )
+        cmd_error("match offset bits should be from 0 to 9");
+    if( bits_mlen < 2 || bits_moff > 12 )
+        cmd_error("match length bits should be from 2 to 12");
+    if( min_mlen < 1 || min_mlen > 16 )
+        cmd_error("minimum match length should be from 1 to 16");
+
+    if( optind < argc-2 )
+        cmd_error("too many arguments: one input file and one output file expected");
+    FILE *input_file = stdin;
+    if( optind < argc )
+    {
+        input_file = fopen(argv[optind], "rb");
+        if( !input_file )
+        {
+            fprintf(stderr, "%s: can't open input file '%s': %s\n",
+                    prog_name, argv[optind], strerror(errno));
+            exit(EXIT_FAILURE);
+        }
+    }
+    // Set stdin and stdout as binary files
+    set_binary();
+
+    // Alloc statistic arrays
+    stat_len = calloc(sizeof(int), max_mlen + 1);
+    stat_off = calloc(sizeof(int), max_off + 1);
 
     // Max size of each bufer: 128k
     for(int i=0; i<9; i++)
@@ -204,23 +360,20 @@ int main()
         lpos[i] = -1;
     }
 
-    // Set stdin and stdout as binary files
-    set_binary();
-
     // Skip SAP header
-    long pos = ftell(stdin);
-    while( 0 != fgets(header_line, 80, stdin) )
+    long pos = ftell(input_file);
+    while( 0 != fgets(header_line, 80, input_file) )
     {
         size_t ln = strlen(header_line);
         if( ln < 1 || header_line[ln-1] != '\n' )
             break;
-        pos = ftell(stdin);
+        pos = ftell(input_file);
     }
 
-    fseek(stdin, pos, SEEK_SET);
+    fseek(input_file, pos, SEEK_SET);
     // Read all data
     int sz;
-    for( sz = 0;  1 == fread(buf, 9, 1, stdin) && sz < (128*1024); sz++ )
+    for( sz = 0;  1 == fread(buf, 9, 1, input_file) && sz < (128*1024); sz++ )
     {
         for(int i=0; i<9; i++)
         {
@@ -239,6 +392,23 @@ int main()
             data[i][sz] = buf[i];
         }
     }
+    // Close file
+    if( input_file != stdin )
+        fclose(input_file);
+
+    // Open output file if needed
+    FILE *output_file = stdout;
+    if( optind < argc-1 )
+    {
+        output_file = fopen(argv[optind+1], "wb");
+        if( !output_file )
+        {
+            fprintf(stderr, "%s: can't open output file '%s': %s\n",
+                    prog_name, argv[optind+1], strerror(errno));
+            exit(EXIT_FAILURE);
+        }
+    }
+    b.out = output_file;
     // Check for empty streams and warn
     int chn_skip[9];;
     init(&b);
@@ -290,9 +460,16 @@ int main()
             if( !chn_skip[i] )
                 lpos[i] = lzop_encode(&b, &lz[i], pos, lpos[i]);
     bflush(&b);
-    fflush(stdout);
+    // Close file
+    if( output_file != stdout )
+        fclose(input_file);
+    else
+        fflush(stdout);
+
 
     // Show stats
+    fprintf(stderr,"LZSS: max offset = %d, max len = %d, match bits = %d\n",
+            max_off, max_mlen, bits_match - 1);
     fprintf(stderr,"Ratio: %d / %d = %.2f%%\n", b.total, 9*sz, (100.0*b.total) / (9.0*sz));
     for(int i=0; i<9; i++)
         if( !chn_skip[i] )
@@ -300,10 +477,15 @@ int main()
                     lz[i].bits[0], (100.0*lz[i].bits[0]) / (8.0*sz),
                     (100.0*lz[i].bits[0])/(8.0*b.total) );
 
-    fprintf(stderr,"\nvalue\t  POS\t  LEN\n");
-    for(int i=0; i<=max(max_len,max_off); i++)
+    if( show_stats )
     {
-        fprintf(stderr,"%2d\t%5d\t%5d\n", i, stat_off[i], stat_len[i]);
+        fprintf(stderr,"\nvalue\t  POS\t  LEN\n");
+        for(int i=0; i<=max(max_mlen,max_off); i++)
+        {
+            fprintf(stderr,"%2d\t%5d\t%5d\n", i,
+                    (i <= max_off) ? stat_off[i] : 0,
+                    (i <= max_mlen) ? stat_len[i] : 0);
+        }
     }
     return 0;
 }
