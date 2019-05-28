@@ -227,9 +227,13 @@ static int lzop_encode(struct bf *b, struct lzop *lz, int pos, int lpos)
 //        fprintf(stderr,"M: %02x : %02x  [%04x]\n", code_pos, code_len,
 //                       (code_pos << bits_mlen) + code_len);
         add_bit(b,0);
-        add_byte(b,(code_pos<<bits_mlen) + code_len);
-        if( bits_mlen + bits_moff > 8 )
-            add_hbyte(b, code_pos>>(8-bits_mlen));
+        if( bits_mlen + bits_moff <= 8 )
+            add_byte(b,(code_pos<<bits_mlen) + code_len);
+        else
+        {
+            add_byte(b,(code_pos<<(8-bits_moff)) + (code_len & ((1<<(8-bits_moff))-1)));
+            add_hbyte(b, code_len>>(8-bits_moff));
+        }
 
         stat_len[mlen] ++;
         stat_off[mpos] ++;
@@ -252,16 +256,28 @@ int main(int argc, char **argv)
     uint8_t buf[9], *data[9];
     char header_line[128];
     int lpos[9];
-    int show_stats = 0;
+    int show_stats = 1;
     int bits_mtotal = bits_moff + bits_mlen;
     int bits_set = 0;
 
     prog_name = argv[0];
     int opt;
-    while( -1 != (opt = getopt(argc, argv, "hvo:l:m:b:")) )
+    while( -1 != (opt = getopt(argc, argv, "hqvo:l:m:b:82")) )
     {
         switch(opt)
         {
+            case '2':
+                bits_moff = 7;
+                bits_mlen = 5;
+                bits_mtotal = 12;
+                bits_set |= 8;
+                break;
+            case '8':
+                bits_moff = 4;
+                bits_mlen = 4;
+                bits_mtotal = 8;
+                bits_set |= 8;
+                break;
             case 'o':
                 bits_moff = atoi(optarg);
                 bits_set |= 1;
@@ -278,7 +294,10 @@ int main(int argc, char **argv)
                 min_mlen = atoi(optarg);
                 break;
             case 'v':
-                show_stats = 1;
+                show_stats = 2;
+                break;
+            case 'q':
+                show_stats = 0;
                 break;
             case 'h':
             default:
@@ -291,11 +310,14 @@ int main(int argc, char **argv)
                        "input_file is also omitted, read from standard input.\n"
                        "\n"
                        "Options:\n"
+                       "  -8       Sets default 8 bit match size.\n"
+                       "  -2       Sets default 12 bit match size.\n"
                        "  -o BITS  Sets match offset bits (default = %d).\n"
                        "  -l BITS  Sets match length bits (default = %d).\n"
                        "  -b BITS  Sets match total bits (=offset+length) (default = %d).\n"
                        "  -m NUM   Sets minimum match length (default = %d).\n"
                        "  -v       Shows match length/offset statistics.\n"
+                       "  -q       Don't show per stream compression.\n"
                        "  -h       Shows this help.\n",
                        prog_name, bits_moff, bits_mlen, bits_mtotal, min_mlen);
                 exit(EXIT_FAILURE);
@@ -319,9 +341,10 @@ int main(int argc, char **argv)
             bits_moff = bits_mtotal - bits_mlen;
             break;
         case 3:
+        case 8:
             // OK
             break;
-        case 7:
+        default:
             cmd_error("only two of OFFSET, LENGTH and TOTAL bits should be given");
             break;
     }
@@ -421,7 +444,8 @@ int main(int argc, char **argv)
                 n++;
         if( i != 0 && !n )
         {
-            fprintf(stderr,"Skipping channel #%d, set with $%02x.\n", i, s);
+            if( show_stats )
+                fprintf(stderr,"Skipping channel #%d, set with $%02x.\n", i, s);
             add_bit(&b,1);
             add_byte(&b,s);
             chn_skip[i] = 1;
@@ -468,16 +492,17 @@ int main(int argc, char **argv)
 
 
     // Show stats
-    fprintf(stderr,"LZSS: max offset = %d, max len = %d, match bits = %d\n",
+    fprintf(stderr,"LZSS: max offset = %d, max len = %d, match bits = %d, ",
             max_off, max_mlen, bits_match - 1);
-    fprintf(stderr,"Ratio: %d / %d = %.2f%%\n", b.total, 9*sz, (100.0*b.total) / (9.0*sz));
-    for(int i=0; i<9; i++)
-        if( !chn_skip[i] )
-            fprintf(stderr," Stream #%d: %d bits,\t%5.2f%%,\t%5.2f%% of output\n", i,
-                    lz[i].bits[0], (100.0*lz[i].bits[0]) / (8.0*sz),
-                    (100.0*lz[i].bits[0])/(8.0*b.total) );
-
+    fprintf(stderr,"ratio: %d / %d = %.2f%%\n", b.total, 9*sz, (100.0*b.total) / (9.0*sz));
     if( show_stats )
+        for(int i=0; i<9; i++)
+            if( !chn_skip[i] )
+                fprintf(stderr," Stream #%d: %d bits,\t%5.2f%%,\t%5.2f%% of output\n", i,
+                        lz[i].bits[0], (100.0*lz[i].bits[0]) / (8.0*sz),
+                        (100.0*lz[i].bits[0])/(8.0*b.total) );
+
+    if( show_stats>1 )
     {
         fprintf(stderr,"\nvalue\t  POS\t  LEN\n");
         for(int i=0; i<=max(max_mlen,max_off); i++)
