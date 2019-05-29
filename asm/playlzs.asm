@@ -1,11 +1,19 @@
 ;
-; LLZSS Compressed SAP player
-; ---------------------------
+; LZSS Compressed SAP player for 8 match bits
+; -------------------------------------------
 ;
-
+; This player uses:
+;  Match length: 4 bits  (2 to 17)
+;  Match offset: 4 bits  (1 to 16)
+;  Min length: 2
+;  Total match bits: 12 bits
+;
+; Compress using:
+;  lzss -b 8 -o 4 input.rsap test.lz8
+;
     org $80
 
-cur_chan    .ds     1
+cur_pos     .ds     1
 chn_copy    .ds     9
 chn_pos     .ds     9
 
@@ -29,7 +37,7 @@ buffer
     org $2100
 
 song_data
-        ins     'test.lz2'
+        ins     'test.lz8'
 song_end
 
 
@@ -52,11 +60,11 @@ chn_no_skip
     bne clear
 
 sap_loop:
-    ldx  #0
+    ldx #8
 
     ; Loop through all "channels", one for each POKEY register
 chn_loop:
-    stx cur_chan
+    sty cur_pos
 
     lda chn_copy, x    ; Get status of this stream
     bmi skip_chn       ; Negative - skip this channel
@@ -78,8 +86,9 @@ got_bit:
     sta chn_copy, x    ; Store in "copy length"
 
     pla                ; Restore A, get match position
+    eor cur_pos
     and #$F0
-    ora cur_chan       ; Add channel to position
+    eor cur_pos        ; Add channel to position
 
     sta chn_pos, x     ; Store "position"
 
@@ -87,15 +96,14 @@ got_bit:
 do_copy_byte:
     dec chn_copy, x     ; Decrease match length, increase match position
     lda chn_pos, x
-;    clc                ; NOTE: here C is always clear because the CPX at the end of the channel loop,
-;                       ;       and the CMP at the end of the SAP loop
+    clc
     adc #$10
     sta chn_pos, x
 
     ; Now, read old data, jump to data store
-    tax
-    lda buffer, x
-    ldx cur_chan
+    tay
+    lda buffer, y
+    ldy cur_pos
 
 store:
     sta POKEY, x        ; Store to output and buffer
@@ -103,13 +111,12 @@ store:
 
 skip_chn:
     iny
-    inx
-    cpx #$09
-    bne chn_loop        ; Next channel
+    dex
+    bpl chn_loop        ; Next channel
 
-    tya                 ; Increment buffer pos to channel 0 again (9 + 6 + C = 16)
-;   sec                 ; Here C = 1 from CPX above
-    adc #$6
+    tya                 ; Increment buffer pos to channel 0 again
+    clc
+    adc #$07
     tay
 
     lda 20
