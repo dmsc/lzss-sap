@@ -153,6 +153,13 @@ static void lzop_init(struct lzop *lz, const uint8_t *data, int size)
     lz->mpos = calloc(sizeof(int), size);
 }
 
+static void lzop_free(struct lzop *lz)
+{
+    free(lz->bits);
+    free(lz->mlen);
+    free(lz->mpos);
+}
+
 // Returns maximal match length (and match position) at pos.
 static int match(const uint8_t *data, int pos, int size, int *mpos)
 {
@@ -530,6 +537,16 @@ int main(int argc, char **argv)
                     (i <= max_mlen) ? stat_len[i] : 0);
         }
     }
+
+    // Free memory
+    for(int i=0; i<9; i++)
+    {
+        free(data[i]);
+        if( !chn_skip[i] )
+            lzop_free(&lz[i]);
+    }
+    free(stat_len);
+    free(stat_off);
     return 0;
 }
 
