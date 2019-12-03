@@ -504,7 +504,7 @@ int main(int argc, char **argv)
     bflush(&b);
     // Close file
     if( output_file != stdout )
-        fclose(input_file);
+        fclose(output_file);
     else
         fflush(stdout);
 
