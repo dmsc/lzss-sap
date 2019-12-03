@@ -190,7 +190,11 @@ static void lzop_backfill(struct lzop *lz)
         lz->mpos[pos] = mp;
         for(int l=ml; l>=min_mlen; l--)
         {
-            int b = lz->bits[pos+l] + bits_match;
+            int b;
+            if( pos+l < lz->size )
+                b = lz->bits[pos+l] + bits_match;
+            else
+                b = 0;
             if( b < best )
             {
                 best = b;
