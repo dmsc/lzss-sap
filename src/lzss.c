@@ -477,7 +477,7 @@ int main(int argc, char **argv)
         }
         else
         {
-            if( !i )
+            if( i )
                 add_bit(&b,0);
             chn_skip[i] = 0;
             if( !n )
