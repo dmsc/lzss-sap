@@ -416,6 +416,8 @@ int main(int argc, char **argv)
         if( ln < 1 || header_line[ln-1] != '\n' )
             break;
         pos = ftell(input_file);
+        if( (ln == 2 && header_line[ln-2] == '\r') || (ln == 1) )
+            break;
     }
 
     fseek(input_file, pos, SEEK_SET);

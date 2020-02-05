@@ -22,6 +22,8 @@ int main()
         if( ln < 1 || header_line[ln-1] != '\n' )
             break;
         pos = ftell(stdin);
+        if( (ln == 2 && header_line[ln-2] == '\r') || (ln == 1) )
+            break;
     }
     fseek(stdin, pos, SEEK_SET);
 
