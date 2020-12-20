@@ -4,7 +4,6 @@ CFLAGS=-O2 -Wall
 PROGS=\
 lz4s\
 lzss\
-rle\
 split\
 
 all: $(PROGS:%=bin/%)
