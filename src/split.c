@@ -1,3 +1,14 @@
+/*
+ * Atari SAP-R File Splitter
+ * -------------------------
+ *
+ * This program splits a SAP file into one file for each POKEY register. This
+ * allows to try compressors in each "stream".
+ *
+ * (c) 2020 DMSC
+ * Code under MIT license, see LICENSE file.
+ */
+
 #include <stdio.h>
 #include <stdint.h>
 #include <string.h>

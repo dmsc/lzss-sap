@@ -1,3 +1,15 @@
+/*
+ * Atari SAP-R File Compressor
+ * ---------------------------
+ *
+ * This implementa an optimal LZSS compressor for the SAP-R music files.
+ * The compressed files can be played in an Atari using the included
+ * assembly programs, depending on the specific parameters.
+ *
+ * (c) 2020 DMSC
+ * Code under MIT license, see LICENSE file.
+ */
+
 #include <errno.h>
 #include <stdint.h>
 #include <stdio.h>

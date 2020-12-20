@@ -1,3 +1,14 @@
+/*
+ * Atari SAP-R File Compressor
+ * ---------------------------
+ *
+ * This implementa an optimal (modified) LZ4 compressor for the SAP-R music
+ * files.
+ *
+ * (c) 2020 DMSC
+ * Code under MIT license, see LICENSE file.
+ */
+
 #include <errno.h>
 #include <stdint.h>
 #include <stdio.h>

@@ -2,6 +2,9 @@
 ; LZSS Compressed SAP player for 16 match bits
 ; --------------------------------------------
 ;
+; (c) 2020 DMSC
+; Code under MIT license, see LICENSE file.
+;
 ; This player uses:
 ;  Match length: 8 bits  (2 to 257)
 ;  Match offset: 8 bits  (1 to 256)
