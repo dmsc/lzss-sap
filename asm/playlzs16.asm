@@ -9,7 +9,7 @@
 ;  Total match bits: 16 bits
 ;
 ; Compress using:
-;  lzss -b 16 -o 8 input.rsap test.lz12
+;  lzss -b 16 -o 8 -m 1 input.rsap test.lz12
 ;
     org $80
 
