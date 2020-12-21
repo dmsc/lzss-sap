@@ -14,6 +14,12 @@
 ; Compress using:
 ;  lzss -b 8 -o 4 input.rsap test.lz8
 ;
+; Assemble this file with MADS assembler, the compressed song is expected in
+; the `test.lz8` file at assembly time.
+;
+; The player needs 16 bytes of buffer for each pokey register stored, for a
+; full SAP file this is 144 bytes.
+;
     org $80
 
 cur_pos     .ds     1

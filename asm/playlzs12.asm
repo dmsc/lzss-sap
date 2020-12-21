@@ -14,6 +14,12 @@
 ; Compress using:
 ;  lzss -b 12 -o 7 input.rsap test.lz16
 ;
+; Assemble this file with MADS assembler, the compressed song is expected in
+; the `test.lz12` file at assembly time.
+;
+; The plater needs 256 bytes of buffer for each pokey register stored, for a
+; full SAP file this is 1152 bytes.
+;
     org $80
 
 chn_copy    .ds     9
