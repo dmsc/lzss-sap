@@ -189,10 +189,25 @@ static int match(const uint8_t *data, int pos, int size, int *mpos)
     return mlen;
 }
 
-static void lzop_backfill(struct lzop *lz)
+// Calculate optimal encoding from the end of stream.
+// if last_literal is 1, we force the last byte to be encoded as a literal.
+static void lzop_backfill(struct lzop *lz, int last_literal)
 {
-    if(lz->size)
-        lz->bits[lz->size-1] = bits_literal;
+    // If no bytes, nothing to do
+    if(!lz->size)
+        return;
+
+    if(last_literal)
+    {
+        // Forced last literal - process one byte less
+        lz->mlen[lz->size-1] = 0;
+        lz->size --;
+        if( !lz->size )
+            return;
+    }
+
+    // Init last bits
+    lz->bits[lz->size-1] = bits_literal;
 
     // Go backwards in file storing best parsing
     for(int pos = lz->size - 2; pos>=0; pos--)
@@ -223,9 +238,36 @@ static void lzop_backfill(struct lzop *lz)
             }
         }
     }
+    // Fixup size again
+    if( last_literal )
+        lz->size ++;
 }
 
-static int lzop_encode(struct bf *b, struct lzop *lz, int pos, int lpos)
+// Returns 1 if the coded stream would end in a match
+static int lzop_last_is_match(const struct lzop * lz)
+{
+    int last = 0;
+    for(int pos = 0; pos < lz->size; )
+    {
+        int mlen = lz->mlen[pos];
+        lz->mlen[pos]--;
+        if( mlen < min_mlen )
+        {
+            // Skip over one literal byte
+            last = 0;
+            pos ++;
+        }
+        else
+        {
+            // Skip over one match
+            pos = pos + mlen;
+            last = 1;
+        }
+    }
+    return last;
+}
+
+static int lzop_encode(struct bf *b, const struct lzop *lz, int pos, int lpos)
 {
     if( pos <= lpos )
         return lpos;
@@ -288,10 +330,11 @@ int main(int argc, char **argv)
     int show_stats = 1;
     int bits_mtotal = bits_moff + bits_mlen;
     int bits_set = 0;
+    int force_last_literal = 1;
 
     prog_name = argv[0];
     int opt;
-    while( -1 != (opt = getopt(argc, argv, "hqvo:l:m:b:826")) )
+    while( -1 != (opt = getopt(argc, argv, "hqvo:l:m:b:826e")) )
     {
         switch(opt)
         {
@@ -335,6 +378,9 @@ int main(int argc, char **argv)
             case 'q':
                 show_stats = 0;
                 break;
+            case 'e':
+                force_last_literal = 0;
+                break;
             case 'h':
             default:
                 fprintf(stderr,
@@ -353,6 +399,7 @@ int main(int argc, char **argv)
                        "  -l BITS  Sets match length bits (default = %d).\n"
                        "  -b BITS  Sets match total bits (=offset+length) (default = %d).\n"
                        "  -m NUM   Sets minimum match length (default = %d).\n"
+                       "  -e       Don't force a literal at end of stream.\n"
                        "  -v       Shows match length/offset statistics.\n"
                        "  -q       Don't show per stream compression.\n"
                        "  -h       Shows this help.\n",
@@ -513,8 +560,22 @@ int main(int argc, char **argv)
         if( !chn_skip[i] )
         {
             lzop_init(&lz[i], data[i], sz);
-            lzop_backfill(&lz[i]);
+            lzop_backfill(&lz[i], 0);
         }
+
+    // Detect if at least one of the streams end in a match:
+    int end_not_ok = 1;
+    for(int i=0; i<9; i++)
+        if( !chn_skip[i] )
+            end_not_ok &= lzop_last_is_match(&lz[i]);
+
+    // If all streams end in a match, we need to fix at least one to end in
+    // a literal - just fix stream 0, as this is always encoded:
+    if( force_last_literal && end_not_ok )
+    {
+        fprintf(stderr,"LZSS: fixing up stream #0 to end in a literal\n");
+        lzop_backfill(&lz[0], 1);
+    }
 
     // Compress
     init(&b);
@@ -528,7 +589,6 @@ int main(int argc, char **argv)
         fclose(output_file);
     else
         fflush(stdout);
-
 
     // Show stats
     fprintf(stderr,"LZSS: max offset= %d,\tmax len= %d,\tmatch bits= %d,\t",

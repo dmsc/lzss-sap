@@ -33,6 +33,11 @@ Options:
  - `-l BITS	` Sets match length bits (default is 4 bits).
  - `-b BITS	` Sets match total bits (=offset+length) (default is 8 bits).
  - `-m NUM 	` Sets minimum match length (default is 2 bits).
+ - `-e          ` Don't force a literal at end of stream. Normally, the encoder
+                  enforces that the last encoded byte of at least one channel
+                  is a literal, this allows the decoder to find the end of the
+                  song. With this option, the compressed file will be smaller
+                  but the decoder won't detect the end correctly.
  - `-v     	` Shows match length/offset statistics.
  - `-q     	` Don't show per stream compression.
  - `-h     	` Shows command line help.
