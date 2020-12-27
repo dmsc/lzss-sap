@@ -250,7 +250,6 @@ static int lzop_last_is_match(const struct lzop * lz)
     for(int pos = 0; pos < lz->size; )
     {
         int mlen = lz->mlen[pos];
-        lz->mlen[pos]--;
         if( mlen < min_mlen )
         {
             // Skip over one literal byte
