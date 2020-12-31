@@ -575,7 +575,7 @@ int main(int argc, char **argv)
         fprintf(stderr,"LZSS: fixing up stream #0 to end in a literal\n");
         lzop_backfill(&lz[0], 1);
     }
-    else
+    else if( end_not_ok )
     {
         fprintf(stderr,"WARNING: stream does not end in a literal.\n");
         fprintf(stderr,"WARNING: this can produce errors at the end of decoding.\n");
