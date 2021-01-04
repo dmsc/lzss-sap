@@ -60,11 +60,18 @@ clear
     tya
     ror                 ; A = 0 or 128
     sta chn_copy-1, x
-    bpl chn_no_skip
-    ; Skip this channel, read just init value
     jsr get_byte
-chn_no_skip
     sta POKEY-1, x
+cbuf
+    sta buffers + $7F
+
+    lda cbuf+1
+    eor #$80
+    sta cbuf+1
+    bmi skip_1
+    inc cbuf+2
+skip_1
+
     dex
     bne clear
 
@@ -139,14 +146,15 @@ store:
     sta POKEY, x        ; Store to output and buffer
     sta (bptr), y
 
+skip_chn:
     ; Increment channel buffer pointer adding 128
     lda bptr
     eor #$80
     sta bptr
-    bmi skip_chn
+    bmi skip_inc
     inc bptr+1
+skip_inc
 
-skip_chn:
     dex
     bpl chn_loop        ; Next channel
 

@@ -54,15 +54,15 @@ start
     lda song_data
     sta chn_bits
 
+    ; Init all channels:
     ldx #9
 clear
-    lda #0
-    lsr chn_bits
-    bcc chn_no_skip
-    ; Skip this channel, read just init value
+    ; Read just init value
     jsr get_byte
-chn_no_skip
     sta POKEY-1, x
+cbuf
+    sta buffers + 255
+    inc cbuf + 2
     dex
     bne clear
 
@@ -113,10 +113,10 @@ store:
     sta POKEY, x        ; Store to output and buffer
     sta (bptr), y
 
+skip_chn:
     ; Increment channel buffer pointer
     inc bptr+1
 
-skip_chn:
     dex
     bpl chn_loop        ; Next channel
 

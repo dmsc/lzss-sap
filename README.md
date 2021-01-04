@@ -38,6 +38,7 @@ Options:
                   is a literal, this allows the decoder to find the end of the
                   song. With this option, the compressed file will be smaller
                   but the decoder won't detect the end correctly.
+ - `-x          ` Reverts to old format version, use for compatibility with old players.
  - `-v     	` Shows match length/offset statistics.
  - `-q     	` Don't show per stream compression.
  - `-h     	` Shows command line help.

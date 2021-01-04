@@ -134,6 +134,8 @@ int hsh(const uint8_t *p)
 static int bits_moff = 4;       // Number of bits used for OFFSET
 static int bits_mlen = 4;       // Number of bits used for MATCH
 static int min_mlen = 2;        // Minimum match length
+static int fmt_literal_first  = 0; // Always include first literal in the output
+static int fmt_pos_start_zero = 0; // Match positions start at 0, else start at max
 
 #define bits_literal (1+8)      // Number of bits for encoding a literal
 #define bits_match (1 + bits_moff + bits_mlen)  // Bits for encoding a match
@@ -286,7 +288,7 @@ static int lzop_encode(struct bf *b, const struct lzop *lz, int pos, int lpos)
     }
     else
     {
-        int code_pos = (pos - 1 - mpos) & (max_off - 1);
+        int code_pos = (pos - mpos - (fmt_pos_start_zero ? 1 : 2)) & (max_off - 1);
         int code_len = mlen - min_mlen;
 //        fprintf(stderr,"M: %02x : %02x  [%04x]\n", code_pos, code_len,
 //                       (code_pos << bits_mlen) + code_len);
@@ -330,10 +332,11 @@ int main(int argc, char **argv)
     int bits_mtotal = bits_moff + bits_mlen;
     int bits_set = 0;
     int force_last_literal = 1;
+    int format_version = 0;  // LZSS format version - 0 means last version
 
     prog_name = argv[0];
     int opt;
-    while( -1 != (opt = getopt(argc, argv, "hqvo:l:m:b:826e")) )
+    while( -1 != (opt = getopt(argc, argv, "hqvo:l:m:b:826ex")) )
     {
         switch(opt)
         {
@@ -380,6 +383,9 @@ int main(int argc, char **argv)
             case 'e':
                 force_last_literal = 0;
                 break;
+            case 'x':
+                format_version = 1;
+                break;
             case 'h':
             default:
                 fprintf(stderr,
@@ -399,12 +405,26 @@ int main(int argc, char **argv)
                        "  -b BITS  Sets match total bits (=offset+length) (default = %d).\n"
                        "  -m NUM   Sets minimum match length (default = %d).\n"
                        "  -e       Don't force a literal at end of stream.\n"
+                       "  -x       Old format with initial data only for skipped channels.\n"
                        "  -v       Shows match length/offset statistics.\n"
                        "  -q       Don't show per stream compression.\n"
                        "  -h       Shows this help.\n",
                        prog_name, bits_moff, bits_mlen, bits_mtotal, min_mlen);
                 exit(EXIT_FAILURE);
         }
+    }
+
+    // Set format flags:
+    switch(format_version)
+    {
+        case 1:
+            fmt_literal_first  = 0;
+            fmt_pos_start_zero = 1;
+            break;
+        default:
+            fmt_literal_first  = 1;
+            fmt_pos_start_zero = 0;
+            break;
     }
 
     if( bits_mtotal < 8 || bits_mtotal > 16 )
@@ -532,7 +552,6 @@ int main(int argc, char **argv)
             if( show_stats )
                 fprintf(stderr,"Skipping channel #%d, set with $%02x.\n", i, s);
             add_bit(&b,1);
-            add_byte(&b,s);
             chn_skip[i] = 1;
         }
         else
@@ -550,6 +569,14 @@ int main(int argc, char **argv)
                 fprintf(stderr, ", should not be included in output!\n");
             }
         }
+    }
+    bflush(&b);
+    // Now, we store initial values for all chanels:
+    for(int i=8; i>=0; i--)
+    {
+        // In version 1 we only store init byte for the skipped channels
+        if( fmt_literal_first || chn_skip[i] )
+            add_byte(&b, *data[i]);
     }
     bflush(&b);
 
@@ -582,8 +609,7 @@ int main(int argc, char **argv)
     }
 
     // Compress
-    init(&b);
-    for(int pos = 0; pos < sz; pos++)
+    for(int pos = fmt_literal_first ? 1 : 0; pos < sz; pos++)
         for(int i=8; i>=0; i--)
             if( !chn_skip[i] )
                 lpos[i] = lzop_encode(&b, &lz[i], pos, lpos[i]);

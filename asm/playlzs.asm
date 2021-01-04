@@ -51,23 +51,21 @@ song_end
 
 
 start
-    ; Y is current position in buffer - init to 0
     ldy #0
-
     ldx #9
 clear
     lsr song_data
     tya
     ror                 ; A = 0 or 128
     sta chn_copy-1, x
-    bpl chn_no_skip
-    ; Skip this channel, read just init value
     jsr get_byte
-chn_no_skip
     sta POKEY-1, x
+    sta buffer + $F0, x
     dex
     bne clear
 
+    ; Y is current position in buffer - init to pos 0 at channel 9
+    ldy #$09
 sap_loop:
     ldx #8
 
@@ -119,13 +117,13 @@ store:
     sta buffer, y
 
 skip_chn:
-    iny
+    dey
     dex
     bpl chn_loop        ; Next channel
 
     tya                 ; Increment buffer pos to channel 0 again
     clc
-    adc #$07
+    adc #$19
     tay
 
     lda 20
