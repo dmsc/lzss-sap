@@ -30,13 +30,15 @@ chn_bits    .ds     1
 
 bit_data    .byte   1
 
-get_byte
+.proc get_byte
     lda song_data+1
-    inc get_byte+1
+    inc song_ptr
     bne skip
-    inc get_byte+2
+    inc song_ptr+1
 skip
     rts
+.endp
+song_ptr = get_byte + 1
 
 
 POKEY = $D200
@@ -51,24 +53,50 @@ song_end
 
 
 start
-    lda song_data
-    sta chn_bits
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+; Song Initialization - this runs in the first tick:
+;
+.proc init_song
+
+    ; Example: here initializes song pointer:
+    ; sta song_ptr
+    ; stx song_ptr + 1
 
     ; Init all channels:
-    ldx #9
+    ldx #8
+    ldy #0
 clear
-    ; Read just init value
+    ; Read just init value and store into buffer and POKEY
     jsr get_byte
-    sta POKEY-1, x
+    sta POKEY, x
+    sty chn_copy, x
 cbuf
     sta buffers + 255
     inc cbuf + 2
     dex
-    bne clear
+    bpl clear
 
-sap_loop:
-    ldx #0
-    stx bptr
+    ; Initialize buffer pointer:
+    sty bptr
+    sty cur_pos
+.endp
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+; Wait for next frame
+;
+.proc wait_frame
+
+    lda 20
+delay
+    cmp 20
+    beq delay
+.endp
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+; Play one frame of the song
+;
+.proc play_frame
     lda #>buffers
     sta bptr+1
 
@@ -121,18 +149,19 @@ skip_chn:
     bpl chn_loop        ; Next channel
 
     inc cur_pos
+.endp
 
-    lda 20
-delay
-    cmp 20
-    beq delay
-
-    lda get_byte + 2
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+; Check for ending of song and jump to the next frame
+;
+.proc check_end_song
+    lda song_ptr + 1
     cmp #>song_end
-    bne sap_loop
-    lda get_byte + 1
+    bne wait_frame
+    lda song_ptr
     cmp #<song_end
-    bne sap_loop
+    bne wait_frame
+.endp
 
 end_loop
     rts
