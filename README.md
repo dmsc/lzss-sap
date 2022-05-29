@@ -38,6 +38,8 @@ Options:
                   is a literal, this allows the decoder to find the end of the
                   song. With this option, the compressed file will be smaller
                   but the decoder won't detect the end correctly.
+ - `-t          ` Trim the SAP-R data before compressing, removes silences at start and
+                  the end and detects looping at the end of the song.
  - `-x          ` Reverts to old format version, use for compatibility with old players.
  - `-v     	` Shows match length/offset statistics.
  - `-q     	` Don't show per stream compression.

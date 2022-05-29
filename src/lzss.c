@@ -313,6 +313,111 @@ static int lzop_encode(struct bf *b, const struct lzop *lz, int pos, int lpos)
     }
 }
 
+///////////////////////////////////////////////////////
+int sap_trim(uint8_t *data[9], int sz, const char *name)
+{
+    if( !sz )
+        return sz;
+
+    // Detect silence at the end:
+    int start;
+    for(start = 0; sz > 0; start++)
+    {
+        int v0 = data[1][sz - 1] & 0x0F;
+        int v1 = data[3][sz - 1] & 0x0F;
+        int v2 = data[5][sz - 1] & 0x0F;
+        int v3 = data[7][sz - 1] & 0x0F;
+        if( v0 || v1 || v2 || v3 )
+            break;
+        sz--;
+    }
+    if( sz <= 0 )
+    {
+        fprintf(stderr, "%s: song is completely silent, skipping.", name);
+        return 0;
+    }
+    if( start )
+        fprintf(stderr, "%s: skipping %d frames from the end.", name, start);
+
+    // Detect silence at the start:
+    for(start=0; start<sz; start++)
+    {
+        int v0 = data[1][start] & 0x0F;
+        int v1 = data[3][start] & 0x0F;
+        int v2 = data[5][start] & 0x0F;
+        int v3 = data[7][start] & 0x0F;
+        if( v0 || v1 || v2 || v3 )
+            break;
+    }
+
+    if( start >= sz )
+    {
+        fprintf(stderr, "%s: song is completely silent, skipping.", name);
+        return 0;
+    }
+
+    // Move song data skipping the blank segment
+    if( start )
+    {
+        fprintf(stderr, "%s: skipping %d frames from the start.", name, start);
+        sz = sz - start;
+        for(int i=0; i<9; i++)
+            memmove(data[i], data[i] + start, sz);
+    }
+
+    // For loop-detecting, clean silent channels:
+    uint8_t *buf = malloc(9 * sz);
+    if( !buf )
+    {
+        fprintf(stderr, "%s: can't detect loop - out of memory.", name);
+        return sz;
+    }
+    for(int i = 0; i < sz; i++)
+    {
+        uint8_t *p = buf + i * 9;
+        p[8] = 0;
+        for(int j = 0; j < 8; j += 2)
+        {
+            if( 0 != (data[j + 1][i] & 0x0F) )
+            {
+                p[j + 0] = data[j + 0][i];
+                p[j + 1] = data[j + 1][i];
+                p[8] = data[8][i];
+            }
+            else
+            {
+                p[j] = p[j + 1] = 0;
+            }
+        }
+    }
+
+    // Detect loops of at least one second at the end of the song
+    const int one_sec = 50;
+    if( sz < 2 * one_sec )
+        return sz;
+
+    for(start = 0; start < sz - 2 * one_sec; start++)
+    {
+        int top = sz - one_sec;
+        for(int i = start + 1; i < top; i++)
+        {
+            if( 0 != memcmp(buf + 9 * start, buf + 9 * i, 9 * (sz - i)) )
+                continue;
+
+            // Detected a loop
+            fprintf(stderr, "%s: loop detected from frame %d to %d (of %d)\n",
+                    name, i, start, sz);
+            // Simply return the shortened song
+            free(buf);
+            return i;
+        }
+    }
+
+    free(buf);
+    return sz;
+}
+
+///////////////////////////////////////////////////////
 static const char *prog_name;
 static void cmd_error(const char *msg)
 {
@@ -328,6 +433,7 @@ int main(int argc, char **argv)
     uint8_t buf[9], *data[9];
     char header_line[128];
     int lpos[9];
+    int do_trim = 0;
     int show_stats = 1;
     int bits_mtotal = bits_moff + bits_mlen;
     int bits_set = 0;
@@ -336,7 +442,7 @@ int main(int argc, char **argv)
 
     prog_name = argv[0];
     int opt;
-    while( -1 != (opt = getopt(argc, argv, "hqvo:l:m:b:826ex")) )
+    while( -1 != (opt = getopt(argc, argv, "hqvo:l:m:b:826ext")) )
     {
         switch(opt)
         {
@@ -358,6 +464,9 @@ int main(int argc, char **argv)
                 bits_mtotal = 16;
                 min_mlen = 1;
                 bits_set |= 8;
+                break;
+            case 't':
+                do_trim = 1;
                 break;
             case 'o':
                 bits_moff = atoi(optarg);
@@ -397,6 +506,7 @@ int main(int argc, char **argv)
                        "input_file is also omitted, read from standard input.\n"
                        "\n"
                        "Options:\n"
+                       "  -t       Tries to trim SAP-R file before compressing.\n"
                        "  -8       Sets default 8 bit match size.\n"
                        "  -2       Sets default 12 bit match size.\n"
                        "  -6       Sets default 16 bit match size.\n"
@@ -523,6 +633,10 @@ int main(int argc, char **argv)
     // Close file
     if( input_file != stdin )
         fclose(input_file);
+
+    // Perform trimming of the data:
+    if( do_trim )
+        sz = sap_trim(data, sz, prog_name);
 
     // Open output file if needed
     FILE *output_file = stdout;
