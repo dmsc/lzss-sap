@@ -9,7 +9,7 @@
 ;  Match length: 4 bits  (2 to 17)
 ;  Match offset: 4 bits  (1 to 16)
 ;  Min length: 2
-;  Total match bits: 12 bits
+;  Total match bits: 8 bits
 ;
 ; Compress using:
 ;  lzss -b 8 -o 4 input.rsap test.lz8

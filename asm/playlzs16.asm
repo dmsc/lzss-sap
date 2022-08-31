@@ -12,7 +12,7 @@
 ;  Total match bits: 16 bits
 ;
 ; Compress using:
-;  lzss -b 16 -o 8 -m 1 input.rsap test.lz12
+;  lzss -b 16 -o 8 -m 1 input.rsap test.lz16
 ;
 ; Assemble this file with MADS assembler, the compressed song is expected in
 ; the `test.lz16` file at assembly time.
