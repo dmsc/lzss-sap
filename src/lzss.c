@@ -195,6 +195,8 @@ static int match(const uint8_t *data, int pos, int size, int *mpos)
 // if last_literal is 1, we force the last byte to be encoded as a literal.
 static void lzop_backfill(struct lzop *lz, int last_literal)
 {
+    int last_bits = 0;
+
     // If no bytes, nothing to do
     if(!lz->size)
         return;
@@ -203,14 +205,16 @@ static void lzop_backfill(struct lzop *lz, int last_literal)
     {
         // Forced last literal - process one byte less
         lz->mlen[lz->size-1] = 0;
-        lz->size --;
-        if( !lz->size )
+        lz->bits[lz->size-1] = bits_literal;
+        last_bits = bits_literal;
+        if(lz->size == 1)
             return;
+        lz->size --;
     }
 
     // Init last bits
     lz->mlen[lz->size-1] = 0;
-    lz->bits[lz->size-1] = bits_literal;
+    lz->bits[lz->size-1] = bits_literal + last_bits;
 
     // Go backwards in file storing best parsing
     for(int pos = lz->size - 2; pos>=0; pos--)
@@ -224,14 +228,15 @@ static void lzop_backfill(struct lzop *lz, int last_literal)
 
         // Check all posible match lengths, store best
         lz->bits[pos] = best;
+        lz->mlen[pos] = 0;
         lz->mpos[pos] = mp;
         for(int l=ml; l>=min_mlen; l--)
         {
-            int b;
+            int b = 0;
             if( pos+l < lz->size )
                 b = lz->bits[pos+l] + bits_match;
-            else
-                b = 0;
+            else if( pos + l == lz->size )
+                b = bits_match + last_bits;
             if( b < best )
             {
                 best = b;
@@ -250,7 +255,7 @@ static void lzop_backfill(struct lzop *lz, int last_literal)
 static int lzop_last_is_match(const struct lzop * lz)
 {
     int last = 0;
-    for(int pos = 0; pos < lz->size; )
+    for(int pos = fmt_literal_first ? 1 : 0; pos < lz->size; )
     {
         int mlen = lz->mlen[pos];
         if( mlen < min_mlen )
@@ -740,11 +745,21 @@ int main(int argc, char **argv)
             max_off, max_mlen, bits_match - 1);
     fprintf(stderr,"ratio: %5d / %d = %5.2f%%\n", b.total, 9*sz, (100.0*b.total) / (9.0*sz));
     if( show_stats )
+    {
+        int total = 8;
         for(int i=0; i<9; i++)
+        {
+            int ssize = 8;
             if( !chn_skip[i] )
-                fprintf(stderr," Stream #%d: %d bits,\t%5.2f%%,\t%5.2f%% of output\n", i,
-                        lz[i].bits[0], (100.0*lz[i].bits[0]) / (8.0*sz),
-                        (100.0*lz[i].bits[0])/(8.0*b.total) );
+                ssize = fmt_literal_first ? lz[i].bits[1] + 8 : lz[i].bits[0];
+
+            total += ssize;
+            fprintf(stderr," Stream #%d: %6d bits,  %5.2f%%,  %5.2f%% of output\n", i,
+                    ssize, (100.0*ssize) / (8.0*sz), (100.0*ssize)/(8.0*b.total) );
+        }
+        fprintf(stderr," Total    : %6d bits,  %5.2f%%,  %5.2f%% of output\n",
+                total, (100.0*total) / (8.0*9*sz), (100.0*total)/(8.0*b.total) );
+    }
 
     if( show_stats>1 )
     {
