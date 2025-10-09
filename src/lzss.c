@@ -209,6 +209,7 @@ static void lzop_backfill(struct lzop *lz, int last_literal)
     }
 
     // Init last bits
+    lz->mlen[lz->size-1] = 0;
     lz->bits[lz->size-1] = bits_literal;
 
     // Go backwards in file storing best parsing
