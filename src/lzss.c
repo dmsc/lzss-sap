@@ -721,6 +721,9 @@ int main(int argc, char **argv)
     {
         fprintf(stderr,"LZSS: fixing up stream #0 to end in a literal\n");
         lzop_backfill(&lz[0], 1);
+        if( lzop_last_is_match(&lz[0]) )
+            fprintf(stderr,"LZSS: BUG: fixing stream 0 did not work!\n");
+
     }
     else if( end_not_ok )
     {
